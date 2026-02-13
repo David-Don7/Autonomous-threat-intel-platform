@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
-from .models import TelemetryUpdateRequest, UnitPublicState, UnitRegistrationRequest, runtime_to_public
+from .models import AlertPayload, TelemetryUpdateRequest, UnitPublicState, UnitRegistrationRequest, runtime_to_public
 from .state_manager import StateManager
+from .threat_engine import ThreatEngine
 from .websocket_manager import WebsocketManager
 
 router = APIRouter()
@@ -19,6 +20,10 @@ def get_websocket_manager(request: Request) -> WebsocketManager:
     return request.app.state.websocket_manager  # type: ignore[attr-defined]
 
 
+def get_threat_engine(request: Request) -> ThreatEngine:
+    return request.app.state.threat_engine  # type: ignore[attr-defined]
+
+
 @router.get("/health")
 async def healthcheck(state_manager: StateManager = Depends(get_state_manager)) -> dict:
     units = await state_manager.get_public_units()
@@ -28,6 +33,11 @@ async def healthcheck(state_manager: StateManager = Depends(get_state_manager)) 
 @router.get("/units", response_model=list[UnitPublicState])
 async def get_units(state_manager: StateManager = Depends(get_state_manager)) -> list[UnitPublicState]:
     return await state_manager.get_public_units()
+
+
+@router.get("/alerts", response_model=list[AlertPayload])
+async def get_alerts(threat_engine: ThreatEngine = Depends(get_threat_engine)) -> list[AlertPayload]:
+    return threat_engine.active_alerts
 
 
 @router.post("/register-unit", response_model=UnitPublicState, status_code=status.HTTP_201_CREATED)

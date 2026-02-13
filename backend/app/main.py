@@ -30,6 +30,7 @@ movement_engine = MovementEngine(state_manager, websocket_manager, anomaly_engin
 
 app.state.state_manager = state_manager  # type: ignore[attr-defined]
 app.state.websocket_manager = websocket_manager  # type: ignore[attr-defined]
+app.state.threat_engine = threat_engine  # type: ignore[attr-defined]
 
 app.include_router(api_router, prefix="/api")
 
