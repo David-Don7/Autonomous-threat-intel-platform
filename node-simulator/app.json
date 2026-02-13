@@ -1,0 +1,22 @@
+{
+  "expo": {
+    "name": "Node Simulator",
+    "slug": "node-simulator",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": false,
+    "splash": {
+      "backgroundColor": "#05070d"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#05070d"
+      }
+    },
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}

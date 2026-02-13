@@ -44,3 +44,6 @@ backend/build/
 # Misc
 dist/
 build/
+.env
+.env.local
+.env.*.local
