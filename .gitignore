@@ -1,1 +1,46 @@
-/.venv
+# Python
+__pycache__/
+.venv/
+*.py[cod]
+*.egg-info/
+*.pyo
+*.pyd
+*.sqlite3
+
+# Expo / React Native
+node-simulator/node_modules/
+node-simulator/.expo/
+node-simulator/.expo-shared/
+node-simulator/.vscode/
+node-simulator/.pnp.cjs
+node-simulator/.pnp.loader.mjs
+node-simulator/.expo-nextjs/
+
+# Dashboard (future React)
+dashboard/node_modules/
+dashboard/.next/
+/dashboard/.expo/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+expo-debug.log*
+
+# IDE
+.vscode/
+.idea/
+
+# System
+*.swp
+Thumbs.db
+
+# FastAPI / Python
+backend/.pytest_cache/
+backend/__pycache__/
+backend/build/
+
+# Misc
+dist/
+build/
