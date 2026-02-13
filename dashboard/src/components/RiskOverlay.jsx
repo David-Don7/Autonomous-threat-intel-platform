@@ -1,55 +1,48 @@
 import React from 'react';
 
 export default function RiskOverlay({ units = [] }) {
-  const riskUnits = units.filter((u) => u.risk_score > 0.3);
-  if (riskUnits.length === 0) return null;
+  const ranked = [...units]
+    .filter(u => u.risk_score > 0)
+    .sort((a, b) => b.risk_score - a.risk_score);
 
   return (
-    <div style={styles.container}>
-      <h4 style={styles.title}>Risk Zones</h4>
-      {riskUnits.map((u) => (
-        <div key={u.unit_id} style={styles.zone}>
-          <span style={{ ...styles.indicator, backgroundColor: riskColor(u.risk_score) }} />
-          <span style={styles.label}>
-            {u.unit_id} — {u.lat.toFixed(4)}, {u.lon.toFixed(4)}
-          </span>
-          <span style={{ ...styles.score, color: riskColor(u.risk_score) }}>
-            {(u.risk_score * 100).toFixed(0)}%
-          </span>
-        </div>
-      ))}
+    <div className="card">
+      <div className="card-label">RISK ASSESSMENT</div>
+      {ranked.length === 0 ? (
+        <div className="empty-state">NO RISK DATA</div>
+      ) : (
+        ranked.map(u => {
+          const pct = (u.risk_score * 100).toFixed(0);
+          const color = riskColor(u.risk_score);
+          const label = riskLabel(u.risk_score);
+          return (
+            <div key={u.unit_id} className="risk-item">
+              <span className="risk-callsign">{u.unit_id}</span>
+              <div className="risk-bar-wrapper">
+                <div className="risk-bar-inner" style={{ width: `${pct}%`, background: color }} />
+              </div>
+              <span className="risk-score-val" style={{ color }}>{u.risk_score.toFixed(2)}</span>
+              <span className="risk-level-tag" style={{ background: color + '22', color }}>
+                {label}
+              </span>
+            </div>
+          );
+        })
+      )}
     </div>
   );
 }
 
-function riskColor(score) {
-  if (score >= 0.75) return '#ef4444';
-  if (score >= 0.55) return '#f97316';
-  if (score >= 0.3) return '#eab308';
-  return '#22c55e';
+function riskColor(s) {
+  if (s >= 0.75) return '#ff1744';
+  if (s >= 0.55) return '#ff6d00';
+  if (s >= 0.3)  return '#ffd600';
+  return '#4caf50';
 }
 
-const styles = {
-  container: {
-    background: '#0f172a',
-    borderRadius: '8px',
-    padding: '10px 12px',
-    marginTop: '8px',
-  },
-  title: { color: '#f1f5f9', fontSize: '14px', marginBottom: '6px' },
-  zone: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    marginBottom: '4px',
-    fontSize: '12px',
-  },
-  indicator: {
-    width: '8px',
-    height: '8px',
-    borderRadius: '50%',
-    flexShrink: 0,
-  },
-  label: { color: '#94a3b8', flex: 1 },
-  score: { fontWeight: 700, fontSize: '13px' },
-};
+function riskLabel(s) {
+  if (s >= 0.75) return 'CRIT';
+  if (s >= 0.55) return 'HIGH';
+  if (s >= 0.3)  return 'ELEV';
+  return 'LOW';
+}

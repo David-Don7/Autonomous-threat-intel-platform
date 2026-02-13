@@ -1,169 +1,340 @@
-import React, { useEffect, useRef, useState } from 'react';
-import mapboxgl from 'mapbox-gl';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import L from 'leaflet';
 
-// Set your Mapbox token via env var VITE_MAPBOX_TOKEN (see .env.example)
-mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN || '';
+const TILE_URL = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+const TILE_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>';
+const MAX_TRAIL = 60;
 
-const RISK_COLORS = {
-  low: '#22c55e',
-  elevated: '#eab308',
-  high: '#f97316',
-  critical: '#ef4444',
-};
-
-function riskLevel(score) {
-  if (score >= 0.75) return 'critical';
-  if (score >= 0.55) return 'high';
-  if (score >= 0.3) return 'elevated';
-  return 'low';
+function riskColor(score) {
+  if (score >= 0.75) return '#ff1744';
+  if (score >= 0.55) return '#ff6d00';
+  if (score >= 0.3)  return '#ffd600';
+  return '#4caf50';
 }
 
-export default function MapView({ units = [], alerts = [] }) {
-  const mapContainer = useRef(null);
-  const map = useRef(null);
-  const markersRef = useRef({});
-  const [mapReady, setMapReady] = useState(false);
+function riskLabel(score) {
+  if (score >= 0.75) return 'CRITICAL';
+  if (score >= 0.55) return 'HIGH';
+  if (score >= 0.3)  return 'ELEVATED';
+  return 'NORMAL';
+}
 
-  // Initialise map
+function statusIcon(status) {
+  switch (status) {
+    case 'active': return '\u25B2';
+    case 'paused': return '\u25A0';
+    case 'idle':   return '\u25CF';
+    default:       return '\u25CB';
+  }
+}
+
+function makeIcon(unit) {
+  const color = riskColor(unit.risk_score);
+  const icon = statusIcon(unit.status);
+  const size = unit.risk_score >= 0.55 ? 22 : 16;
+  const pulse = unit.risk_score >= 0.75 ? 'animation:markerPulse 1.5s ease-in-out infinite;' : '';
+  return L.divIcon({
+    className: '',
+    html: `<div style="
+      width:${size}px;height:${size}px;
+      display:flex;align-items:center;justify-content:center;
+      font-size:${size - 4}px;color:#fff;
+      background:${color};
+      border:2px solid rgba(255,255,255,0.7);
+      border-radius:${unit.status === 'active' ? '3px' : '50%'};
+      cursor:pointer;
+      box-shadow:0 0 8px ${color}80, 0 0 20px ${color}40;
+      transition:all 0.5s ease;
+      ${pulse}
+    ">${icon}</div>`,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
+    popupAnchor: [0, -size / 2 - 4],
+  });
+}
+
+function popupHTML(u) {
+  const color = riskColor(u.risk_score);
+  const label = riskLabel(u.risk_score);
+  const destInfo = u.destination
+    ? `<span style="color:#6b7a5e">DEST&nbsp;&nbsp;</span> <span style="color:#42a5f5">${u.destination.lat.toFixed(4)}, ${u.destination.lon.toFixed(4)}</span><br/>`
+    : '';
+  return `<div style="font-family:'JetBrains Mono',monospace;font-size:11px;line-height:1.8;min-width:170px">
+    <div style="font-size:13px;font-weight:700;color:#a8c99a;margin-bottom:4px;border-bottom:1px solid #243118;padding-bottom:4px">\u2B21 ${u.unit_id}</div>
+    <span style="color:#6b7a5e">STATUS</span> <span style="color:#c8d4bc">${u.status.toUpperCase()}</span><br/>
+    <span style="color:#6b7a5e">POS&nbsp;&nbsp;&nbsp;</span> <span style="color:#c8d4bc">${u.lat.toFixed(5)}, ${u.lon.toFixed(5)}</span><br/>
+    <span style="color:#6b7a5e">SPEED&nbsp;</span> <span style="color:#c8d4bc">${u.speed_mps.toFixed(1)} m/s</span><br/>
+    <span style="color:#6b7a5e">HDG&nbsp;&nbsp;&nbsp;</span> <span style="color:#c8d4bc">${u.direction_deg.toFixed(0)}\u00B0</span><br/>
+    ${destInfo}
+    <span style="color:#6b7a5e">ANOMALY</span> <span style="color:#c8d4bc">${u.anomaly_score.toFixed(3)}</span><br/>
+    <span style="color:#6b7a5e">THREAT</span> <span style="color:${color};font-weight:700">${u.risk_score.toFixed(3)} ${label}</span>
+    <div style="margin-top:6px;border-top:1px solid #243118;padding-top:6px">
+      <span style="color:#42a5f5;cursor:pointer;font-weight:600" onclick="window.__selectUnit && window.__selectUnit('${u.unit_id}')">\u25B8 SELECT FOR COMMAND</span>
+    </div>
+  </div>`;
+}
+
+export default function MapView({ units = [], alerts = [], onAssignDestination }) {
+  const containerRef = useRef(null);
+  const mapRef = useRef(null);
+  const markersRef = useRef({});
+  const trailsRef = useRef({});
+  const risksRef = useRef(null);
+  const destMarkersRef = useRef([]);
+  const fittedRef = useRef(false);
+  const [selectedUnit, setSelectedUnit] = useState(null);
+  const [commandMode, setCommandMode] = useState(false);
+
   useEffect(() => {
-    if (map.current) return;
-    map.current = new mapboxgl.Map({
-      container: mapContainer.current,
-      style: 'mapbox://styles/mapbox/dark-v11',
-      center: [-122.4194, 37.7749],
-      zoom: 12,
-      pitch: 30,
-    });
-    map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
-    map.current.on('load', () => setMapReady(true));
-    return () => {
-      map.current?.remove();
-      map.current = null;
+    window.__selectUnit = (id) => {
+      setSelectedUnit(id);
+      setCommandMode(true);
     };
+    return () => { delete window.__selectUnit; };
   }, []);
 
-  // Add risk zone layer once map is loaded
+  /* Init map */
   useEffect(() => {
-    if (!mapReady || !map.current) return;
-    if (!map.current.getSource('risk-zones')) {
-      map.current.addSource('risk-zones', {
-        type: 'geojson',
-        data: { type: 'FeatureCollection', features: [] },
-      });
-      map.current.addLayer({
-        id: 'risk-heatmap',
-        type: 'circle',
-        source: 'risk-zones',
-        paint: {
-          'circle-radius': ['interpolate', ['linear'], ['get', 'risk'], 0, 10, 1, 60],
-          'circle-color': [
-            'interpolate',
-            ['linear'],
-            ['get', 'risk'],
-            0, '#22c55e',
-            0.3, '#eab308',
-            0.55, '#f97316',
-            0.75, '#ef4444',
-          ],
-          'circle-opacity': 0.35,
-          'circle-blur': 0.6,
-        },
-      });
-    }
-  }, [mapReady]);
+    if (mapRef.current) return;
+    const m = L.map(containerRef.current, {
+      center: [37.7749, -122.4194],
+      zoom: 12,
+      zoomControl: false,
+    });
+    L.tileLayer(TILE_URL, { attribution: TILE_ATTR, maxZoom: 19 }).addTo(m);
+    L.control.zoom({ position: 'topright' }).addTo(m);
+    risksRef.current = L.layerGroup().addTo(m);
+    mapRef.current = m;
+    setTimeout(() => m.invalidateSize(), 250);
+    return () => { m.remove(); mapRef.current = null; };
+  }, []);
 
-  // Update markers + risk zones whenever units change
+  /* Map click → assign destination */
   useEffect(() => {
-    if (!mapReady || !map.current) return;
+    const m = mapRef.current;
+    if (!m) return;
 
-    const activeIds = new Set();
+    const handleClick = (e) => {
+      if (!commandMode || !selectedUnit) return;
 
-    units.forEach((unit) => {
-      activeIds.add(unit.unit_id);
-      const level = riskLevel(unit.risk_score);
-      const color = RISK_COLORS[level];
+      // Remove old dest markers
+      destMarkersRef.current.forEach(x => x.remove());
+      destMarkersRef.current = [];
 
-      if (markersRef.current[unit.unit_id]) {
-        // Update existing marker position
-        markersRef.current[unit.unit_id].marker.setLngLat([unit.lon, unit.lat]);
-        markersRef.current[unit.unit_id].el.style.backgroundColor = color;
-        markersRef.current[unit.unit_id].el.title =
-          `${unit.unit_id} | ${unit.status} | risk: ${unit.risk_score.toFixed(2)}`;
+      const destIcon = L.divIcon({
+        className: '',
+        html: `<div style="
+          width:12px;height:12px;
+          background:#42a5f5;
+          border:2px solid #fff;
+          border-radius:50%;
+          box-shadow:0 0 12px #42a5f580;
+          animation:markerPulse 1s ease-in-out infinite;
+        "></div>`,
+        iconSize: [12, 12],
+        iconAnchor: [6, 6],
+      });
+
+      const destMk = L.marker(e.latlng, { icon: destIcon })
+        .addTo(m)
+        .bindPopup(`<div style="font-family:'JetBrains Mono',monospace;font-size:11px">
+          <div style="color:#42a5f5;font-weight:700">DESTINATION</div>
+          <div style="color:#c8d4bc">${e.latlng.lat.toFixed(5)}, ${e.latlng.lng.toFixed(5)}</div>
+          <div style="color:#6b7a5e;margin-top:4px">for ${selectedUnit}</div>
+        </div>`, { maxWidth: 200 })
+        .openPopup();
+      destMarkersRef.current.push(destMk);
+
+      // Route line
+      const unitData = units.find(u => u.unit_id === selectedUnit);
+      if (unitData) {
+        const line = L.polyline(
+          [[unitData.lat, unitData.lon], [e.latlng.lat, e.latlng.lng]],
+          { color: '#42a5f5', weight: 2, dashArray: '8, 6', opacity: 0.7 }
+        ).addTo(m);
+        destMarkersRef.current.push(line);
+      }
+
+      if (onAssignDestination) {
+        onAssignDestination(selectedUnit, e.latlng.lat, e.latlng.lng);
+      }
+      setCommandMode(false);
+    };
+
+    m.on('click', handleClick);
+    return () => m.off('click', handleClick);
+  }, [commandMode, selectedUnit, units, onAssignDestination]);
+
+  /* Cursor for command mode */
+  useEffect(() => {
+    const el = containerRef.current;
+    if (el) el.style.cursor = commandMode ? 'crosshair' : '';
+  }, [commandMode]);
+
+  /* Sync markers + trails + risk zones */
+  useEffect(() => {
+    const m = mapRef.current;
+    if (!m) return;
+    const seen = new Set();
+
+    units.forEach(u => {
+      seen.add(u.unit_id);
+      const color = riskColor(u.risk_score);
+      const icon = makeIcon(u);
+
+      if (markersRef.current[u.unit_id]) {
+        const mk = markersRef.current[u.unit_id];
+        const target = L.latLng(u.lat, u.lon);
+        if (mk.getLatLng().distanceTo(target) > 0.5) {
+          animateMarker(mk, target);
+        }
+        mk.setIcon(icon);
+        if (mk.getPopup()) mk.getPopup().setContent(popupHTML(u));
       } else {
-        // Create new marker
-        const el = document.createElement('div');
-        el.className = 'unit-marker';
-        el.style.width = '16px';
-        el.style.height = '16px';
-        el.style.borderRadius = '50%';
-        el.style.backgroundColor = color;
-        el.style.border = '2px solid #fff';
-        el.style.cursor = 'pointer';
-        el.style.transition = 'background-color 0.3s';
-        el.title = `${unit.unit_id} | ${unit.status} | risk: ${unit.risk_score.toFixed(2)}`;
+        const mk = L.marker([u.lat, u.lon], { icon })
+          .bindPopup(popupHTML(u), { maxWidth: 260 })
+          .addTo(m);
+        markersRef.current[u.unit_id] = mk;
+      }
 
-        const popup = new mapboxgl.Popup({ offset: 12, closeButton: false }).setHTML(
-          `<div style="font-family:monospace;font-size:12px;color:#0f172a">
-            <strong>${unit.unit_id}</strong><br/>
-            Status: ${unit.status}<br/>
-            Speed: ${unit.speed_mps.toFixed(1)} m/s<br/>
-            Heading: ${unit.direction_deg.toFixed(0)}°<br/>
-            Anomaly: ${unit.anomaly_score.toFixed(3)}<br/>
-            Risk: ${unit.risk_score.toFixed(3)} (${level})
-          </div>`
-        );
-
-        const marker = new mapboxgl.Marker({ element: el })
-          .setLngLat([unit.lon, unit.lat])
-          .setPopup(popup)
-          .addTo(map.current);
-
-        markersRef.current[unit.unit_id] = { marker, el };
+      // Trail
+      if (!trailsRef.current[u.unit_id]) {
+        trailsRef.current[u.unit_id] = {
+          positions: [],
+          polyline: L.polyline([], {
+            color, weight: 1.5, opacity: 0.4, dashArray: '4, 4',
+          }).addTo(m),
+        };
+      }
+      const trail = trailsRef.current[u.unit_id];
+      const pos = L.latLng(u.lat, u.lon);
+      const lastPos = trail.positions[trail.positions.length - 1];
+      if (!lastPos || lastPos.distanceTo(pos) > 1) {
+        trail.positions.push(pos);
+        if (trail.positions.length > MAX_TRAIL) trail.positions.shift();
+        trail.polyline.setLatLngs(trail.positions);
+        trail.polyline.setStyle({ color });
       }
     });
 
-    // Remove stale markers
-    Object.keys(markersRef.current).forEach((id) => {
-      if (!activeIds.has(id)) {
-        markersRef.current[id].marker.remove();
+    // Remove stale
+    Object.keys(markersRef.current).forEach(id => {
+      if (!seen.has(id)) {
+        markersRef.current[id].remove();
         delete markersRef.current[id];
+        if (trailsRef.current[id]) {
+          trailsRef.current[id].polyline.remove();
+          delete trailsRef.current[id];
+        }
       }
     });
 
-    // Update risk zone source
-    const src = map.current.getSource('risk-zones');
-    if (src) {
-      src.setData({
-        type: 'FeatureCollection',
-        features: units
-          .filter((u) => u.risk_score > 0.2)
-          .map((u) => ({
-            type: 'Feature',
-            geometry: { type: 'Point', coordinates: [u.lon, u.lat] },
-            properties: { risk: u.risk_score },
-          })),
-      });
-    }
-  }, [units, mapReady]);
+    // Risk zones
+    risksRef.current.clearLayers();
+    units.filter(u => u.risk_score > 0.15).forEach(u => {
+      L.circle([u.lat, u.lon], {
+        radius: 80 + u.risk_score * 500,
+        color: riskColor(u.risk_score),
+        fillColor: riskColor(u.risk_score),
+        fillOpacity: 0.10,
+        weight: 1,
+        opacity: 0.35,
+      }).addTo(risksRef.current);
+    });
 
-  // Fit bounds if we have units
-  useEffect(() => {
-    if (!mapReady || !map.current || units.length === 0) return;
-    if (units.length === 1) {
-      map.current.flyTo({ center: [units[0].lon, units[0].lat], zoom: 14, speed: 0.8 });
+    // Threat corridors between nearby high-risk units
+    const highUnits = units.filter(u => u.risk_score > 0.55);
+    for (let i = 0; i < highUnits.length; i++) {
+      for (let j = i + 1; j < highUnits.length; j++) {
+        const a = highUnits[i], b = highUnits[j];
+        const dist = L.latLng(a.lat, a.lon).distanceTo(L.latLng(b.lat, b.lon));
+        if (dist < 3000) {
+          L.circle([(a.lat + b.lat) / 2, (a.lon + b.lon) / 2], {
+            radius: dist / 2 + 200,
+            color: '#ff1744',
+            fillColor: '#ff1744',
+            fillOpacity: 0.06,
+            weight: 1,
+            opacity: 0.25,
+            dashArray: '6, 4',
+          }).addTo(risksRef.current);
+        }
+      }
     }
-  }, [units.length > 0 && mapReady]);
+
+    // Auto-fit once
+    if (units.length > 0 && !fittedRef.current) {
+      const markers = Object.values(markersRef.current);
+      if (markers.length > 0) {
+        m.fitBounds(L.featureGroup(markers).getBounds().pad(0.4), { maxZoom: 14 });
+        fittedRef.current = true;
+      }
+    }
+  }, [units]);
+
+  const cancelCommand = useCallback(() => {
+    setCommandMode(false);
+    setSelectedUnit(null);
+  }, []);
 
   return (
-    <div
-      ref={mapContainer}
-      style={{
-        width: '100%',
-        height: '100%',
-        minHeight: '400px',
-        borderRadius: '12px',
-        overflow: 'hidden',
-      }}
-    />
+    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+      <div ref={containerRef} className="leaflet-container" />
+
+      {/* Command mode banner */}
+      {commandMode && (
+        <div className="cmd-overlay">
+          <div className="cmd-overlay-inner">
+            <span className="cmd-overlay-icon">{'\u2316'}</span>
+            <span>CLICK MAP TO SET DESTINATION FOR <strong>{selectedUnit}</strong></span>
+            <button className="cmd-cancel-btn" onClick={cancelCommand}>CANCEL</button>
+          </div>
+        </div>
+      )}
+
+      {/* Unit quick-select chips */}
+      {units.length > 0 && !commandMode && (
+        <div className="unit-select-bar">
+          {units.map(u => (
+            <button
+              key={u.unit_id}
+              className={`unit-chip ${selectedUnit === u.unit_id ? 'selected' : ''}`}
+              style={{ borderColor: riskColor(u.risk_score) }}
+              onClick={() => {
+                setSelectedUnit(u.unit_id);
+                const mk = markersRef.current[u.unit_id];
+                if (mk && mapRef.current) {
+                  mapRef.current.panTo(mk.getLatLng(), { animate: true });
+                  mk.openPopup();
+                }
+              }}
+            >
+              <span className="chip-dot" style={{ background: riskColor(u.risk_score) }} />
+              {u.unit_id}
+            </button>
+          ))}
+          {selectedUnit && (
+            <button className="cmd-assign-btn" onClick={() => setCommandMode(true)}>
+              {'\u25B8'} ASSIGN DEST
+            </button>
+          )}
+        </div>
+      )}
+    </div>
   );
+}
+
+function animateMarker(marker, target, duration = 800) {
+  const start = marker.getLatLng();
+  const startTime = performance.now();
+  function step(now) {
+    const t = Math.min(1, (now - startTime) / duration);
+    const ease = t * (2 - t);
+    marker.setLatLng([
+      start.lat + (target.lat - start.lat) * ease,
+      start.lng + (target.lng - start.lng) * ease,
+    ]);
+    if (t < 1) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
 }

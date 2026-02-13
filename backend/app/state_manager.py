@@ -80,7 +80,7 @@ class StateManager:
     async def get_public_state_payload(self, event_type: str = "state_update") -> dict:
         return {
             "type": event_type,
-            "units": [unit.model_dump() for unit in await self.get_public_units()],
+            "units": [unit.model_dump(mode="json") for unit in await self.get_public_units()],
             "timestamp": utc_now().isoformat(),
         }
 

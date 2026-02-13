@@ -1,7 +1,7 @@
-const BASE_URL = "http://localhost:8000/api";
+import config from "./config";
 
 async function request(path, body) {
-  const response = await fetch(`${BASE_URL}${path}`, {
+  const response = await fetch(`${config.apiUrl}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -19,4 +19,11 @@ export function registerUnit(payload) {
 
 export function updateTelemetry(payload) {
   return request("/update-telemetry", payload);
+}
+
+export function assignDestination(unitId, lat, lon) {
+  return request("/assign-destination", {
+    unit_id: unitId,
+    destination: { lat, lon },
+  });
 }

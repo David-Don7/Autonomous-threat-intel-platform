@@ -98,9 +98,9 @@ class MovementEngine:
         if did_change or new_alerts:
             payload = await self._state_manager.get_public_state_payload()
             if new_alerts:
-                payload["alerts"] = [a.model_dump() for a in new_alerts]
+                payload["alerts"] = [a.model_dump(mode="json") for a in new_alerts]
             payload["active_alerts"] = [
-                a.model_dump() for a in self._threat_engine.active_alerts
+                a.model_dump(mode="json") for a in self._threat_engine.active_alerts
             ]
             payload["ml_status"] = {
                 "trained": self._anomaly_engine.is_trained,

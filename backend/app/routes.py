@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel, Field
 
-from .models import AlertPayload, TelemetryUpdateRequest, UnitPublicState, UnitRegistrationRequest, runtime_to_public
+from .models import AlertPayload, Destination, TelemetryUpdateRequest, UnitPublicState, UnitRegistrationRequest, UnitStatus, runtime_to_public
 from .state_manager import StateManager
 from .threat_engine import ThreatEngine
 from .websocket_manager import WebsocketManager
@@ -47,6 +48,31 @@ async def register_unit(
     websocket_manager: WebsocketManager = Depends(get_websocket_manager),
 ) -> UnitPublicState:
     state = await state_manager.register_unit(payload)
+    await websocket_manager.broadcast(await state_manager.get_public_state_payload())
+    return runtime_to_public(state)
+
+
+class AssignDestinationRequest(BaseModel):
+    unit_id: str = Field(..., min_length=3, max_length=64)
+    destination: Destination
+
+
+@router.post("/assign-destination", response_model=UnitPublicState)
+async def assign_destination(
+    payload: AssignDestinationRequest,
+    state_manager: StateManager = Depends(get_state_manager),
+    websocket_manager: WebsocketManager = Depends(get_websocket_manager),
+) -> UnitPublicState:
+    try:
+        state = await state_manager.update_from_telemetry(
+            TelemetryUpdateRequest(
+                unit_id=payload.unit_id,
+                destination=payload.destination,
+                status=UnitStatus.active,
+            )
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     await websocket_manager.broadcast(await state_manager.get_public_state_payload())
     return runtime_to_public(state)
 

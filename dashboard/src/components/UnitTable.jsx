@@ -1,88 +1,85 @@
-import React from 'react';
+import React, { useState } from 'react';
 
-const RISK_COLORS = {
-  low: '#22c55e',
-  elevated: '#eab308',
-  high: '#f97316',
-  critical: '#ef4444',
-};
+export default function UnitTable({ units = [], onSelectUnit }) {
+  const [sortKey, setSortKey] = useState('unit_id');
+  const [sortAsc, setSortAsc] = useState(true);
 
-function riskLevel(score) {
-  if (score >= 0.75) return 'critical';
-  if (score >= 0.55) return 'high';
-  if (score >= 0.3) return 'elevated';
-  return 'low';
-}
+  const handleSort = (key) => {
+    if (sortKey === key) {
+      setSortAsc(!sortAsc);
+    } else {
+      setSortKey(key);
+      setSortAsc(true);
+    }
+  };
 
-export default function UnitTable({ units = [] }) {
-  if (units.length === 0) {
-    return (
-      <div style={styles.empty}>
-        <p style={{ color: '#94a3b8' }}>No units registered yet.</p>
-      </div>
-    );
-  }
+  const sorted = [...units].sort((a, b) => {
+    let va = a[sortKey], vb = b[sortKey];
+    if (typeof va === 'string') va = va.toLowerCase();
+    if (typeof vb === 'string') vb = vb.toLowerCase();
+    if (va < vb) return sortAsc ? -1 : 1;
+    if (va > vb) return sortAsc ? 1 : -1;
+    return 0;
+  });
+
+  const arrow = (key) => sortKey === key ? (sortAsc ? ' \u25B4' : ' \u25BE') : '';
 
   return (
-    <div style={styles.container}>
-      <h3 style={styles.title}>Unit Status ({units.length})</h3>
-      <table style={styles.table}>
-        <thead>
-          <tr>
-            <th style={styles.th}>Unit</th>
-            <th style={styles.th}>Status</th>
-            <th style={styles.th}>Speed</th>
-            <th style={styles.th}>Heading</th>
-            <th style={styles.th}>Anomaly</th>
-            <th style={styles.th}>Risk</th>
-          </tr>
-        </thead>
-        <tbody>
-          {units.map((unit) => {
-            const level = riskLevel(unit.risk_score);
-            return (
-              <tr key={unit.unit_id} style={styles.row}>
-                <td style={styles.td}>
-                  <span style={{ ...styles.dot, backgroundColor: RISK_COLORS[level] }} />
-                  {unit.unit_id}
-                </td>
-                <td style={{ ...styles.td, color: unit.status === 'active' ? '#22c55e' : '#94a3b8' }}>
-                  {unit.status}
-                </td>
-                <td style={styles.td}>{unit.speed_mps.toFixed(1)} m/s</td>
-                <td style={styles.td}>{unit.direction_deg.toFixed(0)}°</td>
-                <td style={styles.td}>{unit.anomaly_score.toFixed(3)}</td>
-                <td style={{ ...styles.td, color: RISK_COLORS[level], fontWeight: 600 }}>
-                  {unit.risk_score.toFixed(3)} ({level})
-                </td>
+    <div className="card">
+      <div className="card-label">UNIT ROSTER <span className="badge-count">{units.length}</span></div>
+      {units.length === 0 ? (
+        <div className="empty-state">AWAITING FIELD ASSET REGISTRATION</div>
+      ) : (
+        <div className="table-scroll">
+          <table className="roster-table">
+            <thead>
+              <tr>
+                <th onClick={() => handleSort('unit_id')} className="sortable">CALLSIGN{arrow('unit_id')}</th>
+                <th onClick={() => handleSort('status')} className="sortable">STATUS{arrow('status')}</th>
+                <th onClick={() => handleSort('speed_mps')} className="sortable">SPD{arrow('speed_mps')}</th>
+                <th onClick={() => handleSort('direction_deg')} className="sortable">HDG{arrow('direction_deg')}</th>
+                <th onClick={() => handleSort('risk_score')} className="sortable">RISK{arrow('risk_score')}</th>
+                <th>LAST UPD</th>
               </tr>
-            );
-          })}
-        </tbody>
-      </table>
+            </thead>
+            <tbody>
+              {sorted.map(u => (
+                <tr
+                  key={u.unit_id}
+                  className={`roster-row ${u.risk_score >= 0.75 ? 'row-critical' : u.risk_score >= 0.55 ? 'row-high' : ''}`}
+                  onClick={() => onSelectUnit && onSelectUnit(u.unit_id)}
+                >
+                  <td>{u.unit_id}</td>
+                  <td>
+                    <span className={`status-tag ${u.status}`}>
+                      {u.status.toUpperCase()}
+                    </span>
+                  </td>
+                  <td>{u.speed_mps.toFixed(1)}</td>
+                  <td>{u.direction_deg.toFixed(0)}&deg;</td>
+                  <td style={{ color: riskColor(u.risk_score), fontWeight: 700 }}>
+                    {u.risk_score.toFixed(2)}
+                  </td>
+                  <td className="last-update-cell">{fmtTime(u.last_update)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
 
-const styles = {
-  container: { padding: '12px 0' },
-  title: { color: '#f1f5f9', fontSize: '16px', marginBottom: '8px' },
-  table: { width: '100%', borderCollapse: 'collapse', fontSize: '13px' },
-  th: {
-    textAlign: 'left',
-    color: '#64748b',
-    padding: '6px 8px',
-    borderBottom: '1px solid #1e293b',
-    fontWeight: 500,
-  },
-  td: { color: '#cbd5e1', padding: '6px 8px', borderBottom: '1px solid #1e293b' },
-  row: { transition: 'background 0.2s' },
-  dot: {
-    display: 'inline-block',
-    width: '8px',
-    height: '8px',
-    borderRadius: '50%',
-    marginRight: '6px',
-  },
-  empty: { padding: '24px', textAlign: 'center' },
-};
+function riskColor(s) {
+  if (s >= 0.75) return '#ff1744';
+  if (s >= 0.55) return '#ff6d00';
+  if (s >= 0.3) return '#ffd600';
+  return '#4caf50';
+}
+
+function fmtTime(iso) {
+  if (!iso) return '\u2014';
+  try { return new Date(iso).toISOString().slice(11, 19); }
+  catch { return '\u2014'; }
+}

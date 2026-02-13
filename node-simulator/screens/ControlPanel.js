@@ -1,142 +1,200 @@
 import React, { useState } from "react";
-import { Button, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import {
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from "react-native";
 import { registerUnit, updateTelemetry } from "../services/api";
 
-const DEFAULT_COORDS = { lat: 37.7749, lon: -122.4194 };
+const PRESETS = { lat: 37.7749, lon: -122.4194 };
 
 export default function ControlPanel({ onLog }) {
   const [unitId, setUnitId] = useState("alpha-1");
-  const [latitude, setLatitude] = useState(String(DEFAULT_COORDS.lat));
-  const [longitude, setLongitude] = useState(String(DEFAULT_COORDS.lon));
-  const [speed, setSpeed] = useState("1.0");
-  const [direction, setDirection] = useState("90");
+  const [lat, setLat] = useState(String(PRESETS.lat));
+  const [lon, setLon] = useState(String(PRESETS.lon));
+  const [speed, setSpeed] = useState("5.0");
+  const [heading, setHeading] = useState("90");
   const [status, setStatus] = useState("idle");
-  const [message, setMessage] = useState("Ready to register");
+  const [msg, setMsg] = useState("Ready for deployment");
+  const [msgType, setMsgType] = useState("info");
+
+  const flash = (text, type = "info") => { setMsg(text); setMsgType(type); };
 
   const handleRegister = async () => {
     try {
-      const payload = {
+      const res = await registerUnit({
         unit_id: unitId,
         label: `Unit ${unitId}`,
-        position: { lat: Number(latitude), lon: Number(longitude) },
+        position: { lat: Number(lat), lon: Number(lon) },
         speed_mps: Number(speed),
-        direction_deg: Number(direction),
-      };
-      const response = await registerUnit(payload);
-      setMessage(`Registered ${response.unit_id} at ${response.lat.toFixed(4)}, ${response.lon.toFixed(4)}`);
-      onLog?.(`REGISTER ${response.unit_id}`);
-    } catch (error) {
-      setMessage(`Register failed: ${error.message}`);
-      onLog?.(`REGISTER ERROR ${error.message}`);
+        direction_deg: Number(heading),
+      });
+      flash(
+        `\u2713 ${res.unit_id} registered @ ${res.lat.toFixed(4)}, ${res.lon.toFixed(4)}`,
+        "success"
+      );
+      onLog?.(`REGISTER ${res.unit_id}`);
+    } catch (e) {
+      flash(`\u2717 ${e.message}`, "error");
+      onLog?.(`REGISTER_FAIL ${e.message}`);
     }
   };
 
-  const handleTelemetry = async (override = {}) => {
-    if (!unitId) {
-      setMessage("Set a valid unit ID first");
-      return;
-    }
+  const pushTelemetry = async (overrides = {}) => {
+    if (!unitId) { flash("Set a Unit ID first", "error"); return; }
     const payload = {
       unit_id: unitId,
-      position: {
-        lat: Number(latitude),
-        lon: Number(longitude),
-      },
+      position: { lat: Number(lat), lon: Number(lon) },
       speed_mps: Number(speed),
-      direction_deg: Number(direction),
+      direction_deg: Number(heading),
       status,
-      ...override,
+      ...overrides,
     };
     try {
       await updateTelemetry(payload);
-      setMessage(`Telemetry pushed (${payload.status})`);
-      onLog?.(`TELEMETRY ${unitId} status=${payload.status}`);
-    } catch (error) {
-      setMessage(`Telemetry failed: ${error.message}`);
-      onLog?.(`TELEMETRY ERROR ${error.message}`);
+      const st = overrides.status || status;
+      flash(`\u2713 Telemetry sent (${st.toUpperCase()})`, "success");
+      setStatus(st);
+      onLog?.(`TELEMETRY ${unitId} \u2192 ${st}`);
+    } catch (e) {
+      flash(`\u2717 ${e.message}`, "error");
+      onLog?.(`TELEMETRY_FAIL ${e.message}`);
     }
   };
 
-  const handleStart = () => {
-    setStatus("active");
-    handleTelemetry({ status: "active" });
-  };
-
-  const handleStop = () => {
-    setStatus("idle");
-    handleTelemetry({ status: "idle", speed_mps: 0 });
-  };
-
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.inner}>
-      <Text style={styles.sectionTitle}>Control Panel</Text>
-      <View style={styles.row}>
-        <Text style={styles.label}>Unit ID</Text>
-        <TextInput style={styles.input} value={unitId} onChangeText={setUnitId} autoCapitalize="none" />
+    <ScrollView style={s.scroll} contentContainerStyle={s.inner} keyboardShouldPersistTaps="handled">
+      {/* Status banner */}
+      <View style={[s.banner, msgType === "success" ? s.bannerOk : msgType === "error" ? s.bannerErr : s.bannerInfo]}>
+        <Text style={s.bannerText}>{msg}</Text>
       </View>
-      <View style={styles.row}>
-        <Text style={styles.label}>Latitude</Text>
-        <TextInput style={styles.input} value={latitude} onChangeText={setLatitude} />
+
+      {/* Input fields */}
+      <View style={s.section}>
+        <Text style={s.sectionLabel}>{"\u25B8"} UNIT CONFIGURATION</Text>
+        <Field label="CALLSIGN" value={unitId} onChange={setUnitId} />
+        <View style={s.row}>
+          <Field label="LATITUDE" value={lat} onChange={setLat} numeric half />
+          <Field label="LONGITUDE" value={lon} onChange={setLon} numeric half />
+        </View>
+        <View style={s.row}>
+          <Field label="SPEED (m/s)" value={speed} onChange={setSpeed} numeric half />
+          <Field label="HEADING (\u00B0)" value={heading} onChange={setHeading} numeric half />
+        </View>
       </View>
-      <View style={styles.row}>
-        <Text style={styles.label}>Longitude</Text>
-        <TextInput style={styles.input} value={longitude} onChangeText={setLongitude} />
-      </View>
-      <View style={styles.row}>
-        <Text style={styles.label}>Speed (m/s)</Text>
-        <TextInput style={styles.input} value={speed} onChangeText={setSpeed} keyboardType="numeric" />
-      </View>
-      <View style={styles.row}>
-        <Text style={styles.label}>Direction (deg)</Text>
-        <TextInput style={styles.input} value={direction} onChangeText={setDirection} keyboardType="numeric" />
-      </View>
-      <View style={styles.buttonRow}>
-        <Button title="Register" onPress={handleRegister} color="#22c55e" />
-        <Button title="Start" onPress={handleStart} color="#2563eb" />
-        <Button title="Stop" onPress={handleStop} color="#ef4444" />
-      </View>
-      <View style={styles.row}>
-        <Text style={styles.statusLabel}>{message}</Text>
+
+      {/* Action buttons */}
+      <View style={s.section}>
+        <Text style={s.sectionLabel}>{"\u25B8"} COMMANDS</Text>
+        <View style={s.btnRow}>
+          <Btn label="REGISTER" color="#4caf50" onPress={handleRegister} />
+          <Btn label="DEPLOY" color="#2196f3" onPress={() => pushTelemetry({ status: "active" })} />
+          <Btn label="HALT" color="#ef5350" onPress={() => pushTelemetry({ status: "idle", speed_mps: 0 })} />
+        </View>
+        <View style={s.btnRow}>
+          <Btn label="PAUSE" color="#ffa726" onPress={() => pushTelemetry({ status: "paused", speed_mps: 0 })} />
+          <Btn label="PUSH UPDATE" color="#5fa84f" onPress={() => pushTelemetry({})} />
+        </View>
       </View>
     </ScrollView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    backgroundColor: "#0b1220",
-    marginHorizontal: 16,
-    borderRadius: 16,
+function Field({ label, value, onChange, numeric, half }) {
+  return (
+    <View style={[s.fieldWrap, half && { flex: 1 }]}>
+      <Text style={s.fieldLabel}>{label}</Text>
+      <TextInput
+        style={s.input}
+        value={value}
+        onChangeText={onChange}
+        keyboardType={numeric ? "numeric" : "default"}
+        autoCapitalize="none"
+        placeholderTextColor="#3d4a34"
+      />
+    </View>
+  );
+}
+
+function Btn({ label, color, onPress }) {
+  return (
+    <TouchableOpacity
+      style={[s.btn, { borderColor: color }]}
+      onPress={onPress}
+      activeOpacity={0.6}
+    >
+      <Text style={[s.btnText, { color }]}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
+const s = StyleSheet.create({
+  scroll: { flex: 1, backgroundColor: "#060804" },
+  inner: { padding: 16, paddingBottom: 32 },
+  banner: {
+    padding: 10,
+    borderRadius: 4,
+    marginBottom: 16,
+    borderWidth: 1,
   },
-  inner: {
-    padding: 16,
+  bannerOk: { backgroundColor: "rgba(76,175,80,0.08)", borderColor: "rgba(76,175,80,0.25)" },
+  bannerErr: { backgroundColor: "rgba(239,83,80,0.08)", borderColor: "rgba(239,83,80,0.25)" },
+  bannerInfo: { backgroundColor: "rgba(95,168,79,0.05)", borderColor: "rgba(95,168,79,0.15)" },
+  bannerText: {
+    color: "#c8d4bc",
+    fontSize: 12,
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
   },
-  sectionTitle: {
-    color: "#f1f5f9",
-    fontSize: 18,
+  section: { marginBottom: 20 },
+  sectionLabel: {
+    color: "#6b7a5e",
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 2,
+    marginBottom: 12,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: "#1a2612",
+  },
+  row: { flexDirection: "row", gap: 10 },
+  fieldWrap: { marginBottom: 12 },
+  fieldLabel: {
+    color: "#6b7a5e",
+    fontSize: 10,
     fontWeight: "600",
-    marginBottom: 12,
-  },
-  row: {
-    marginBottom: 12,
-  },
-  label: {
-    color: "#94a3b8",
+    letterSpacing: 1.5,
     marginBottom: 4,
   },
   input: {
-    backgroundColor: "#1d2738",
-    borderRadius: 8,
-    padding: 8,
-    color: "#f8fafc",
+    backgroundColor: "#0d1208",
+    borderWidth: 1,
+    borderColor: "#243118",
+    borderRadius: 4,
+    padding: 10,
+    color: "#c8d4bc",
+    fontSize: 14,
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
   },
-  buttonRow: {
+  btnRow: {
     flexDirection: "row",
-    justifyContent: "space-between",
-    marginTop: 8,
+    gap: 10,
+    marginBottom: 10,
   },
-  statusLabel: {
-    color: "#cbd5f5",
+  btn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 4,
+    borderWidth: 1.5,
+    backgroundColor: "rgba(0,0,0,0.3)",
+    alignItems: "center",
+  },
+  btnText: {
     fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 2,
   },
 });
